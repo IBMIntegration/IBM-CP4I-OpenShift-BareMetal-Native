@@ -1,5 +1,7 @@
 # CP4I on IBM Cloud Bare Metal without Virtualisation
 
+# --- Caution: work in progress ---
+
 IBM Cloud Pak for Integration relies on Red Hat Openshift Container Platform (OCP) for its platform.  OCP features the ability to create the required infrastructure automatically on certain cloud platforms; this is called Installer Provisioned Infrastructure or IPI.  The alternative is User Provisioned Infrastructure or UPI.  IPI is not currently available on IBM Cloud so UPI must be used.  This document is therefore in three parts:
 
 1. Creating infrastructure on IBM Cloud
@@ -162,10 +164,30 @@ This gateway can now be tested from the test server as follows:
 - Try and access the internet e.g. `ping www.bbc.co.uk`.
 
 ### 6. Load Balancers
-Openshift requires four load balancers:  
+Openshift requires load balancers for bootstrap related traffic, for control plane traffic, and for ingress traffic i.e. access to the user applications.  This guide uses the IBM local load banalcer service and will create four instances:
+
+| Name             | Type                | Servers            | Ports       |
+| -----------------| --------------------|--------------------|-------------|
+| Internal Proxy   | Private to private  | Workers            | 80, 443     |
+| External Proxy   | Public to private   | Workers            | 80, 443     |
+| Internal API     | Private to private  | Bootstrap, masters | 6443, 22623*|
+| External API     | Public to private   | Bootstrap, workers | 6443        |
+
+ \* This rule should be removed after installation is complete along with the bootstrap server.
 
 ### 7. Domain Name Registration
-Register a domain name
+Openshift 4.x requires a registered domain name for a cluster.  The installation program requires a cluster name, and this is prepended to the domain name e.g. mycluster.mydomain.com. Then, Openshift requires subdomains to be added to the DNS zone for the cluster to funciton, some of which are needed by external clients and some by internal.  The external names need to resolve to external IPs, and the internal names to internal IPs.
+
+This guide uses a public DNS service for the public DNS names (in my case, Amazon Route53 since my domain was already registered there), and a local nameserver (BIND) in the cluster for the private names.
+
+Create the following A records in your zone, assuming your cluster name will be mycluster and your domain is mydomain.com:
+
+| Name | IP |
+|------| ---|
+| api.mycluster.mydomain.com | IP of external API load balancer |
+| *.apps.mycluster.mydomain.com | IP of external proxy load balancer |
+
+Reverse records are not necessary for the public DNS.
 
 ### 8. Cluster DNS Services
 IBM Cloud offers a DNS service, however it does not allow reverse records for private IPs, and OCP nodes need to do reverse lookups on their own IPs to establish their hostnames.  Other DNS solutions could be used, however these instructions use BIND set up on the VSI.
@@ -183,4 +205,83 @@ listen-on port 53 { 10.113.180.174; };
 allow-query     { localhost; openshift; };
 ```
 
-At this point, you will need to know your your registered domain
+- At the end of the file add the following for the forward zone:
+```
+zone "mycluster.mydomain.com" IN {
+ type master;
+ file "mycluster.mydomain.com.db";
+ allow-update { none; };
+};
+```
+
+- Reverse zones are named with the significant IP octets in reverse, so if your subnet is 10.1.2.x then the zone shoudl be 2.1.10.in-addr-arpa
+```
+zone "2.1.10.in-addr.arpa" IN {
+  type master;
+  file "2.1.10.db";
+  allow-update { none; };
+};
+```
+- NB In the following examples, 'name' refers to the first part of the hostname because the rest of the domain name is defined at the top of the zone file.
+- Create the zone file in for the forward zone in `/var/named` called `mycluster.mydomain.com.db` with the following content including your own values. Note that IBM Cloud load balancers have multiple redundant IP addresses, so two records are included.
+
+```$TTL 86400
+@ IN SOA ns1.softlayer.com. root.mycluster.mydomain.com. (
+                       2020030800        ; Serial
+                       7200              ; Refresh
+                       600               ; Retry
+                       1728000           ; Expire
+                       3600)             ; Minimum
+
+@                      86400    IN NS    ns1.softlayer.com.
+@                      86400    IN NS    ns2.softlayer.com.
+
+*.apps                 900      IN A     <internal proxy LB address 1>
+*.apps                 900      IN A     <internal proxy LB address 2>
+api                    900      IN A     <internal API LB address 1>
+api                    900      IN A     <internal API LB address 2>
+api-int                900      IN A     <internal API LB address 1>
+api-int                900      IN A     <internal API LB address 2>
+etcd-0                 900      IN A     <master 1 address>
+etcd-1                 900      IN A     <master 2 address>
+etcd-2                 900      IN A     <master 3 address>
+<bootstrap name>       900      IN A     <bootstrap address>
+<master 1 name>        900      IN A     <master 1 address>
+<master 2 name>        900      IN A     <master 2 address>
+<master 3 name>        900      IN A     <master 3 address>
+<worker 1 name>        900      IN A     <worker 1 address>
+<worker 2 name>        900      IN A     <worker 2 address>
+<worker 3 name>        900      IN A     <worker 3 address>
+<VSI name>             900      IN A     <VSI IP>
+_etcd-server-ssl._tcp  900      IN SRV   0 10 2380 etcd-0
+_etcd-server-ssl._tcp  900      IN SRV   0 10 2380 etcd-1
+_etcd-server-ssl._tcp  900      IN SRV   0 10 2380 etcd-2
+```
+
+- Then create a reverse file matching the reverse zone definition above e.g. 2.1.10.db:
+
+```
+$TTL 86400
+@ IN SOA ns1.softlayer.com. root.mycluster.mydomain.com. (
+                       2020030722        ; Serial
+                       7200              ; Refresh
+                       600               ; Retry
+                       1728000           ; Expire
+                       3600)             ; Minimum
+
+@                      86400    IN NS    ns1.softlayer.com.
+@                      86400    IN NS    ns2.softlayer.com.
+
+<bootstrap last octet>  IN PTR <bootstrap name>.;
+<master 1 last octet>   IN PTR <master 1 name>.;
+<master 2 past octet>   IN PTR <master 2 name>.;
+<master 3 last octet>   IN PTR <master 3 name>.;
+<worker 1 last octet>   IN PTR <worker 1 name>.;
+<worker 2 last octet>   IN PTR <worker 2 name>.;
+<worker 3 last octet>   IN PTR <worker 3 name>.;
+```
+
+- Restart the DNS service with `systemctl named restart`
+- Test name resolution from your test server, if you have one.
+
+### 9. SMB Server
