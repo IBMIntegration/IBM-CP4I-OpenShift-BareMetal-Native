@@ -284,4 +284,38 @@ $TTL 86400
 - Restart the DNS service with `systemctl named restart`
 - Test name resolution from your test server, if you have one.
 
-### 9. SMB Server
+### 9. VSI Firewall
+- Identify your public and private interfaces.  On an IBM Cloud VSI the public interface should be eth1 and the private eth0.
+- Add the private interface to the 'internal' group `firewall-cmd --permanent --zone=internal --change-interface=eth0`
+- Add the public interface to the 'external' group `firewall-cmd --permanent --zone=external --change-interface=eth1`
+- Add the SMB service to the internal zone `firewall-cmd --permanent --zone=internal --add-service=samba`
+- Add HTTP to the internal zone `firewall-cmd --permanent --zone=internal --add-service=http`
+- Add DNS to the internal zone `firewall-cmd --permanent --zone=internal --add-service=dns`
+- Start or restart the firewall `systemctl start firewalld` or `systemctl restart firewalld`
+- Enable the firewall permanently `systemctl enable firewalld`
+
+### 10. SMB Server
+The VSI needs to host an SMB share to allow the bare metal server management system to mount it.  It is also possible to mount ISOs from your local workstation, but it is less convenient in most cases as it requires extra software to be installed.
+
+To set up SMB on the VSI:
+
+- Install the packages with `yum install samba samba-client samba-common`
+- Create a group for SMB users `groupadd smbgrp`
+- Create an SMB user called e.g. coreos with the command `useradd coreos -G smbgrp`
+- Create a folder to hold the shared files e.g. `/share/coreos`
+- Change the permissions of the shared folder: `chmod 777 /share/coreos`
+- Add the following to /etc/samba/smb.conf:
+
+```
+[coreos]
+	path = /share/coreos
+	valid users = @smbgrp
+	guest ok = no
+	writable = yes
+	browsable = no
+```
+- Under the `[global]` section in smb.conf, add the line `ntlm auth = yes`.  This is an insecure protocol, but it is required because the IPMI console will try to use it when it mounts the ISO as a virtual DVD.
+- Start the SMB services with `systemctl start smb.service` and `systemctl start nmb.service`
+- Enable the services to start on boot with `systemctl enable smb.service` and `systemctl enable nmb.service`
+
+### 11. 
