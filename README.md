@@ -318,4 +318,57 @@ To set up SMB on the VSI:
 - Start the SMB services with `systemctl start smb.service` and `systemctl start nmb.service`
 - Enable the services to start on boot with `systemctl enable smb.service` and `systemctl enable nmb.service`
 
-### 11. 
+### 11. HTTP Server
+This is required to allow the nodes to access their configuration files when they are installing.
+- On the VSI, install apache `yum install httpd`
+- Start the server 'systemctl start httpd'
+- Enable the service permanently `systemctl enable httpd`
+
+### 12. Install docker
+Docker is not specifically required for the installation process, however these instructions use a utility called filetranspiler which is written in Python, and distributed as both Python source and a container image.  In the spirit of the modern containerised world it was decided to use the container version which will be described here.  However those familiar with Python may wish to use the source directly.  Consult the github repo at https://github.com/ashcrow/filetranspiler for instructions on using Python directly.  We will proceed with docker here.
+
+- Install docker with `yum install docker`
+- Start docker with `systemctl start docker`
+- Enable docker on restart with `systemctl enable docker`
+
+### 13. Set up the VPN
+The web-based IPMI console for managing the bare metal servers is available via a management IP address which is on the same subnet as the servers themselves.  To access this from your local workstation a VPN connection is required.
+
+- Under the Classic Infrastructure menu in the IBM Cloud console, select the Network drop-down on the right hand side, then IPSec VPN.
+- In the top right, click 'Order VPN', and select your data center from the list.  Wait a few minutes for the service to be provisioned.
+- Once the VPN is available, click on its name in the list.  On the following configuration page it is not necessary to enter anything in the Remote Peer Address field.
+- The Customer Subnets list is a white-list of the IPs from which connection is allowed.  Enter a suitable CIDR.
+- The Hosted Private Subnets section is a list of the subnets to which this VPN will allow access.  Click on 'Add Hosted Private Subnet', then in the dialog box find the subnet on which your servers are and click the Add link.
+- Click on Update Device in the bottom right.
+
+Now the endpoint is configured, a username and password will be required to connect.  VPN access is granted to users via the access management page.
+
+- At the top of the screen click on the Manage drop-down and select Access (IAM).  On the next screen click on Users.
+- Select your user from the list.
+- On the user details page, scroll down to VPN password and enter a password.
+- By default you have access to all subnets on which the devices to which you have access are situated.  The account owner has access to all the devices.
+
+To connect to the VPN, an IPSec VPN client is required such as MotionPro which is a free download.  The software requires an endpoint address, a username and password.
+
+- To find your endpoint address, go to https://cloud.ibm.com/docs/iaas-vpn?topic=iaas-vpn-available-vpn-endpoints and select the appropriate endpoint for your data centre.
+- The username and password are those configured in the IAM screen earlier in this section.
+
+### 14. Obtaining the installation files
+Openshift 4.x uses Red Hat Core OS.  To install CoreOS on a machine, the machine must boot from an ISO with configuration parameters suppled to a GRUB-like bootloader.  The ISO will then download an ignition file and an OS image which it will will write to the disk.  The ignition file contains configuration for the server.  When the machine is rebooted CoreOS will boot and join the cluster as specified in the ignition file.
+
+There are two version of the OS disk image - one for BIOS and one for UEFI.  These instructions will use the BIOS version but the process should be the same for UEFI.
+
+The ignition files are created by a utility called `openshift-install` which along with the ISO and the OS images is downloadable from Red Hat.
+
+These instructions will conduct the installation from the VSI although it is possible to do this from a local workstation if desired, however the VPN must be correctly configured to allow this.
+
+Visit https://cloud.redhat.com/openshift/install/metal/user-provisioned to download the following:
+- The Openshift installer
+- Your pull secret
+- The Openshift command line tool (oc)
+
+Click on the Download RHCOS link to get to the download archive.  From this page, download the following, where <version> is the appropriate version:
+- rhcos-<version>-x86_64-installer.x86_64.iso
+- rhcos-<version>-x86_64-metal.x86_64.raw.gz
+
+### 15. Configuring installation
