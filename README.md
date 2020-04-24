@@ -1,6 +1,10 @@
-# CP4I on IBM Cloud Bare Metal without Virtualisation
+# **CP4I on IBM Cloud Bare Metal without Virtualisation**
 
-# --- Caution: work in progress ---
+Ben Cornwell, Architect, Hybrid Cloud Integration
+
+24/3/2020
+
+## Introduction
 
 IBM Cloud Pak for Integration relies on Red Hat Openshift Container Platform (OCP) for its platform.  OCP features the ability to create the required infrastructure automatically on certain cloud platforms; this is called Installer Provisioned Infrastructure or IPI.  The alternative is User Provisioned Infrastructure or UPI.  IPI is not currently available on IBM Cloud so UPI must be used.  This document is therefore in three parts:
 
@@ -302,6 +306,7 @@ To set up SMB on the VSI:
 - Install the packages with `yum install samba samba-client samba-common`
 - Create a group for SMB users `groupadd smbgrp`
 - Create an SMB user called e.g. coreos with the command `useradd coreos -G smbgrp`
+- Set an SMB password for the user with `smbpasswd -a coreos`
 - Create a folder to hold the shared files e.g. `/share/coreos`
 - Change the permissions of the shared folder: `chmod 777 /share/coreos`
 - Add the following to /etc/samba/smb.conf:
@@ -363,12 +368,113 @@ The ignition files are created by a utility called `openshift-install` which alo
 These instructions will conduct the installation from the VSI although it is possible to do this from a local workstation if desired, however the VPN must be correctly configured to allow this.
 
 Visit https://cloud.redhat.com/openshift/install/metal/user-provisioned to download the following:
-- The Openshift installer
+- The Openshift installer (Linux version)
 - Your pull secret
-- The Openshift command line tool (oc)
+- The Openshift command line tool (oc) (Linux version)
 
 Click on the Download RHCOS link to get to the download archive.  From this page, download the following, where <version> is the appropriate version:
 - rhcos-<version>-x86_64-installer.x86_64.iso
 - rhcos-<version>-x86_64-metal.x86_64.raw.gz
 
+Place the files in the appropriate locations
+- Copy the installer ISO `rhcos-<version>-x86_64-installer.x86_64.iso` to the SMB share e.g. `/share/coreos`
+- Copy the disc image `rhcos-<version>-x86_64-metal.x86_64.raw.gz` to the HTML server directory `/var/www/html`
+
 ### 15. Configuring installation
+
+- Put the openshift-installer executable on the VSI.
+- Create a file called install-config.yaml, and add the following content, substituting the appropriate values.  NB the number of worker nodes in this file must be zero even though we are adding worker nodes later.  Make sure that the cidr of the cluster network does NOT overlap with the subnet of your bare metal machines.  The service network can be left as it is.  The SSH key is the public part of the one created in step 1.
+
+```
+apiVersion: v1
+baseDomain: mydomain.com
+compute:
+- hyperthreading: Enabled   
+  name: worker
+  replicas: 0
+controlPlane:
+  hyperthreading: Enabled   
+  name: master
+  replicas: 3
+metadata:
+  name: mycluster
+networking:
+  clusterNetwork:
+  - cidr: 10.128.0.0/9
+    hostPrefix: 26
+  networkType: OpenShiftSDN
+  serviceNetwork:
+  - 172.30.0.0/16
+platform:
+  none: {}
+pullSecret: 'xxx'
+sshKey: 'ssh-rsa xxx'
+```
+
+- Create an install directory e.g. `install01`.  This is the working directory for the openshift installer.  **Make a copy** of install-config.yaml and place it in this directory.  The openshift-install program consumes this file, so if the installation fails and needs to be run again, it is useful to have a copy.
+- Create manifests `openshift-install create manifests --dir=install01`.  Ignore the warning about no compute nodes.
+- Edit `install01/manifests/cluster-scheduler-02-config.yml` and change the parameter `mastersSchedulable` to `false`.
+- Create ignition config files with `openshift-install create ignition-configs --dir=install01`
+
+This will create bootstrap, master and worker ignition files that are suitable for use with DHCP.  However this cluster must use static IPs, so each node must have its own ignition file with that static IP written into it.  The static IP must be the same IP as assigned to the server by IBM Cloud.
+
+Ignition files are not human readable, so it is best to use a utility for this.  As mentioned above, these instructions will use filetranspiler available from https://github.com/ashcrow/filetranspiler - but other tools may be available.  Filetranspiler works by taking files from a 'fakeroot' directory and including them into the ignition file.
+
+- Make a directory e.g. `filetranspiler` and change to it.
+- `git clone https://github.com/ashcrow/filetranspiler`
+- Build the docker image `docker build . -t filetranspiler:latest`
+- Make another directory to contain the fake roots e.g. `fakeroots`
+
+The following tasks are repetitive and may be scripted, and a script to help is available in this repository at http://XXXX.  The steps in the script will be described below.  For *each machine* i.e. bootstrap, three masters and three workers, do the following steps:
+
+- Create a standard interface configuration file for the static network in the  fakeroot directory
+```
+cat > fakeroots/<machine name>/etc/sysconfig/network-scripts/ifcfg-eno1 << EOF
+DEVICE=eno1
+BOOTPROTO=static
+ONBOOT=yes
+IPADDR=<ip address>
+PREFIX=<subnet prefix>
+NETMASK=<netmask>
+GATEWAY=<VSI IP>
+DNS1=<VSI IP>
+DNS2=10.0.80.11
+DOMAIN=mycluster.mydomain.com
+DEFROUTE=yes
+IPV6INIT=no
+HOSTNAME=<node name>.mycluster.mydomain.com
+EOF
+```
+
+- Run filetranspiler, substituting machine type for boostrap, master or worker:
+```docker run --rm -ti --volume `pwd`:/srv:z filetranspiler -i install01/<machine type>.ign -f fakeroots/ocpmaster41 -o install01/<machine name>.ign```
+
+After this there should be seven new ign files in the install01 directory.  
+- Copy these files to /var/www/html
+
+### 16. Install CoreOS
+Installing CoreOS is a two stage process.  Firstly, the system boots from the ISO.  At this point, basic installation parameters must be entered on the command line to enable networking.  The system then downloads an ign file and an OS image from the HTTP server, writes the image to the specified disk and configures the system according to the ign file with networking and the cluster details.  When the system reboots from the disk, the system will adopt the role defined in the ign file, either bootstrap, master or worker.  The master and worker nodes will contact the bootstrap node which will orchestrate the assembly of the cluster.
+
+**NB** The process of booting the machine from the ISO and entering parameters requires using the IPMI management console from your workstation.  This console presents a virtual screen that shows the boot up screen and allows the user to type in parameters.  However, it is unfortunately NOT possible to copy and paste in or out of the virtual screen.  The configuration strings are long and mis-typing is easy.  Therefore it is strongly recommended to use an auto-typing tool.  On a Mac this is possible via Applescript, see https://www.sythe.org/threads/auto-typer-script-for-mac/ for an example.
+
+- Connect the VPN via your IPsec client as described in section 13.
+
+For each node - bootstrap, three masters and three workers (in that order), complete the following steps:
+
+- Go to the Classic Infrastructure page on IBM Cloud and select Devices then Device List.  Select a device - starting with the bootstrap device.
+- Select Remote Management from the left hand menu.  Under Management Details there is a password - select Show and then copy the password.
+- From the Actions drop-down in the top right, select KVM Console.  In the resulting log in screen, enter 'root' for the user and paste the password.  The IPMI console should appear.
+- Under Remote Control select Power Control.  Use the menu to power the server off if it is running.
+- Under Virtual Media, select CD-ROM image.  There should be listed three devices with no disk emulation set.  If not, contact support to un-mount any unwanted images.
+- Enter the details of the SMB share:  for host, enter the VSI IP; for the path enter the share name and filename of the ISO e.g. /coreos/rhcos-<version>-x86_64-installer.x86_64.iso; enter the username and password set for the SMB user in step 10.
+- Click Save then Mount.  If the mount was successful, Device 1 in the list of devices should report that an image is mounted.
+- Under Remote Control at the top of the screen, select iKVM/HTML5.  Then on the next screen click the iKVM/HTML5 button.
+- A pop-up window will appear with a menu and a blank screen.  In the menu select Power Control then Set Power On.  The CoreOS installer should boot.
+- A boot screen should appear.  This will vary depending on the specific type of server being used.  There should be an option to enter boot parameters - sometimes this is accessed by pressing TAB, and sometimes by pressing 'e'.  Either way, select the option.
+- For the boot parameters enter the following text **all on one line**
+```
+ip=<machine IP>::<VSI IP>:<subnet netmask>:<machine short name>:eno1:none:<VSI IP> coreos.inst.install_dev=sda coreos.inst.image_url=http://<VSI IP>/rhcos-<version>-x86_64-metal.x86_64.raw.gz coreos.inst.ignition_url=http://<VSI IP>/<ign filename>
+```
+- Press the key to boot the machine as prompted - either 'e' or Ctrl-X
+
+The machine should boot, then after configuring its network it should download the ign file and the OS image.  After this is complete it will write the image to disc and then reboot automaticaly.  In the traditional style for installing an OS, the virutal ISO must be ejected before the machine has rebooted, to allow it to boot from the hard disk.  Use the IPMI console to unmount the CD as described previously.
