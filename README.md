@@ -452,7 +452,7 @@ EOF
 After this there should be seven new ign files in the install01 directory.  
 - Copy these files to /var/www/html
 
-### 16. Install CoreOS
+### 16. Initiate CoreOS Installation
 Installing CoreOS is a two stage process.  Firstly, the system boots from the ISO.  At this point, basic installation parameters must be entered on the command line to enable networking.  The system then downloads an ign file and an OS image from the HTTP server, writes the image to the specified disk and configures the system according to the ign file with networking and the cluster details.  When the system reboots from the disk, the system will adopt the role defined in the ign file, either bootstrap, master or worker.  The master and worker nodes will contact the bootstrap node which will orchestrate the assembly of the cluster.
 
 **NB** The process of booting the machine from the ISO and entering parameters requires using the IPMI management console from your workstation.  This console presents a virtual screen that shows the boot up screen and allows the user to type in parameters.  However, it is unfortunately NOT possible to copy and paste in or out of the virtual screen.  The configuration strings are long and mis-typing is easy.  Therefore it is strongly recommended to use an auto-typing tool.  On a Mac this is possible via Applescript, see https://www.sythe.org/threads/auto-typer-script-for-mac/ for an example.
@@ -471,10 +471,21 @@ For each node - bootstrap, three masters and three workers (in that order), comp
 - Under Remote Control at the top of the screen, select iKVM/HTML5.  Then on the next screen click the iKVM/HTML5 button.
 - A pop-up window will appear with a menu and a blank screen.  In the menu select Power Control then Set Power On.  The CoreOS installer should boot.
 - A boot screen should appear.  This will vary depending on the specific type of server being used.  There should be an option to enter boot parameters - sometimes this is accessed by pressing TAB, and sometimes by pressing 'e'.  Either way, select the option.
-- For the boot parameters enter the following text **all on one line**
+- The general format for the boot parameter string is as follows
+```
+ip=machine IP::gateway:subnet:hostname:network adapter:none:nameserver coreos.inst.install_dev=install device coreos.inst.image_url=OS image URL coreos.inst.ignition_url=ignition file URL
+```
+
+- Therefore in this installation, for the boot parameters enter the following text **all on one line**
 ```
 ip=<machine IP>::<VSI IP>:<subnet netmask>:<machine short name>:eno1:none:<VSI IP> coreos.inst.install_dev=sda coreos.inst.image_url=http://<VSI IP>/rhcos-<version>-x86_64-metal.x86_64.raw.gz coreos.inst.ignition_url=http://<VSI IP>/<ign filename>
 ```
 - Press the key to boot the machine as prompted - either 'e' or Ctrl-X
 
 The machine should boot, then after configuring its network it should download the ign file and the OS image.  After this is complete it will write the image to disc and then reboot automaticaly.  In the traditional style for installing an OS, the virutal ISO must be ejected before the machine has rebooted, to allow it to boot from the hard disk.  Use the IPMI console to unmount the CD as described previously.
+
+### 16. Monitoring Installation Progress
+When a node comes online, it will contact the bootstrap node and connect itself to the cluster.  This may take some time.  The process can be monitored with the openshift-install command.
+
+- Monitor the bootstrap process with `./openshift-install --dir=install01 wait-for bootstrap-complete --log-level=info`
+- When this has completed, 
