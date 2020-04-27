@@ -179,6 +179,9 @@ Openshift requires load balancers for bootstrap related traffic, for control pla
 
  \* This rule should be removed after installation is complete along with the bootstrap server.
 
+ Complete the following steps for each of the load balancers in the above table
+ - On the Classic Infrastructure page
+
 ### 7. Domain Name Registration
 Openshift 4.x requires a registered domain name for a cluster.  The installation program requires a cluster name, and this is prepended to the domain name e.g. mycluster.mydomain.com. Then, Openshift requires subdomains to be added to the DNS zone for the cluster to funciton, some of which are needed by external clients and some by internal.  The external names need to resolve to external IPs, and the internal names to internal IPs.
 
@@ -488,4 +491,10 @@ The machine should boot, then after configuring its network it should download t
 When a node comes online, it will contact the bootstrap node and connect itself to the cluster.  This may take some time.  The process can be monitored with the openshift-install command.
 
 - Monitor the bootstrap process with `./openshift-install --dir=install01 wait-for bootstrap-complete --log-level=info`
-- When this has completed, 
+
+At this point you can remove the bootstrap node from the load balancer.
+- On the IBM Cloud Classic Infrastructure page click on Network on the left hand menu then on Load Balancers.
+
+- When this has completed, run `./openshift-install --dir=install01 wait-for install-complete --log-level=info`
+
+### 17. Post-install Tasks
