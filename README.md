@@ -123,10 +123,11 @@ For each server:
 - Choose your data center
 - Select from 'Configurable servers'
 
+
 | Role       | Category          | Server Type             | RAM  | Notes |
-| -----------|-------------------|-------------------------|------| |
-| Bootstrap  | Single Processor  | Intel Xeon E3-1270 v6   | 16Gb |  |
-| Master     | Single Processor  | Intel Xeon E3-1270 v6   | 16Gb | |
+| -----------|-------------------|-------------------------|------|-------|
+| Bootstrap  | Single Processor  | Intel Xeon E3-1270 v6   | 16Gb |       |
+| Master     | Single Processor  | Intel Xeon E3-1270 v6   | 16Gb |       |
 | Worker     | Dual Processor    | Intel Xeon 4110         | 96Gb | **Not** GPU or UEFI |
 
 - Choose your SSH key uploaded earlier from the drop-down.
